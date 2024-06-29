@@ -8,7 +8,7 @@ SonyTranslate is a powerful and user-friendly web application that allows you to
 | Description | Link |
 | ----------- | ---- |
 | 📙 Colab Notebook | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/R3gm/SoniTranslate/blob/main/SoniTranslate_Colab.ipynb) |
-| 🎉 Repository | [![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-black?style=flat-square&logo=github)](https://github.com/R3gm/SoniTranslate/) |
+| 🎉 Repository | [![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-black?style=flat-square&logo=github)](https://github.com/imole-bj/VideoDubbing/) |
 | 🚀 Online DEMO | [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/r3gm/SoniTranslate_translate_audio_of_a_video_content) |
 
 ## SonyTranslate's web UI, which features a browser interface built on the Gradio library.
@@ -109,6 +109,7 @@ For a comprehensive understanding of the project, we highly recommend watching t
 | tt            | Tatar                     |
 | uz            | Uzbek                     |
 | yo            | Yoruba                    |
+| fon            | Fongbe                    |
 
 ### Non-transcription
 
@@ -184,7 +185,7 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvi
 
 2. Clone this github repository and navigate to it:
 ```
-git clone https://github.com/r3gm/SoniTranslate.git
+git clone https://github.com/imole-bj/VideoDubbing.git
 cd SoniTranslate
 ```
 
