@@ -1,12 +1,12 @@
 from gtts import gTTS
-import edge_tts, asyncio, json, glob # noqa
+import asyncio, json, glob # noqa
 from tqdm import tqdm
 import librosa, os, re, torch, gc, subprocess # noqa
 from .language_configuration import (
     fix_code_language,
-    BARK_VOICES_LIST,
     VITS_VOICES_LIST,
 )
+
 from .utils import (
     download_manager,
     create_directories,
@@ -103,180 +103,6 @@ def pad_array(array, sr):
     except Exception as error:
         logger.error(str(error))
         return array
-
-
-# =====================================
-# EDGE TTS
-# =====================================
-
-
-def edge_tts_voices_list():
-    try:
-        completed_process = subprocess.run(
-            ["edge-tts", "--list-voices"], capture_output=True, text=True
-        )
-        lines = completed_process.stdout.strip().split("\n")
-    except Exception as error:
-        logger.debug(str(error))
-        lines = []
-
-    voices = []
-    for line in lines:
-        if line.startswith("Name: "):
-            voice_entry = {}
-            voice_entry["Name"] = line.split(": ")[1]
-        elif line.startswith("Gender: "):
-            voice_entry["Gender"] = line.split(": ")[1]
-            voices.append(voice_entry)
-
-    formatted_voices = [
-        f"{entry['Name']}-{entry['Gender']}" for entry in voices
-    ]
-
-    if not formatted_voices:
-        logger.warning(
-            "The list of Edge TTS voices could not be obtained, "
-            "switching to an alternative method"
-        )
-        tts_voice_list = asyncio.new_event_loop().run_until_complete(
-            edge_tts.list_voices()
-        )
-        formatted_voices = sorted(
-            [f"{v['ShortName']}-{v['Gender']}" for v in tts_voice_list]
-        )
-
-    if not formatted_voices:
-        logger.error("Can't get EDGE TTS - list voices")
-
-    return formatted_voices
-
-
-def segments_egde_tts(filtered_edge_segments, TRANSLATE_AUDIO_TO, is_gui):
-    for segment in tqdm(filtered_edge_segments["segments"]):
-        speaker = segment["speaker"] # noqa
-        text = segment["text"]
-        start = segment["start"]
-        tts_name = segment["tts_name"]
-
-        # make the tts audio
-        filename = f"audio/{start}.ogg"
-        temp_file = filename[:-3] + "mp3"
-
-        logger.info(f"{text} >> {filename}")
-        try:
-            if is_gui:
-                asyncio.run(
-                    edge_tts.Communicate(
-                        text, "-".join(tts_name.split("-")[:-1])
-                    ).save(temp_file)
-                )
-            else:
-                # nest_asyncio.apply() if not is_gui else None
-                command = f'edge-tts -t "{text}" -v "{tts_name.replace("-Male", "").replace("-Female", "")}" --write-media "{temp_file}"'
-                run_command(command)
-            verify_saved_file_and_size(temp_file)
-
-            data, sample_rate = sf.read(temp_file)
-            data = pad_array(data, sample_rate)
-            # os.remove(temp_file)
-
-            # Save file
-            sf.write(
-                file=filename,
-                samplerate=sample_rate,
-                data=data,
-                format="ogg",
-                subtype="vorbis",
-            )
-            verify_saved_file_and_size(filename)
-
-        except Exception as error:
-            error_handling_in_tts(error, segment, TRANSLATE_AUDIO_TO, filename)
-
-
-# =====================================
-# BARK TTS
-# =====================================
-
-
-def segments_bark_tts(
-    filtered_bark_segments, TRANSLATE_AUDIO_TO, model_id_bark="suno/bark-small"
-):
-    from transformers import AutoProcessor, BarkModel
-    from optimum.bettertransformer import BetterTransformer
-
-    device = os.environ.get("SONITR_DEVICE")
-    torch_dtype_env = torch.float16 if device == "cuda" else torch.float32
-
-    # load model bark
-    model = BarkModel.from_pretrained(
-        model_id_bark, torch_dtype=torch_dtype_env
-    ).to(device)
-    model = model.to(device)
-    processor = AutoProcessor.from_pretrained(
-        model_id_bark, return_tensors="pt"
-    )  # , padding=True
-    if device == "cuda":
-        # convert to bettertransformer
-        model = BetterTransformer.transform(model, keep_original_model=False)
-        # enable CPU offload
-        # model.enable_cpu_offload()
-    sampling_rate = model.generation_config.sample_rate
-
-    # filtered_segments = filtered_bark_segments['segments']
-    # Sorting the segments by 'tts_name'
-    # sorted_segments = sorted(filtered_segments, key=lambda x: x['tts_name'])
-    # logger.debug(sorted_segments)
-
-    for segment in tqdm(filtered_bark_segments["segments"]):
-        speaker = segment["speaker"] # noqa
-        text = segment["text"]
-        start = segment["start"]
-        tts_name = segment["tts_name"]
-
-        inputs = processor(text, voice_preset=BARK_VOICES_LIST[tts_name]).to(
-            device
-        )
-
-        # make the tts audio
-        filename = f"audio/{start}.ogg"
-        logger.info(f"{text} >> {filename}")
-        try:
-            # Infer
-            with torch.inference_mode():
-                speech_output = model.generate(
-                    **inputs,
-                    do_sample=True,
-                    fine_temperature=0.4,
-                    coarse_temperature=0.8,
-                    pad_token_id=processor.tokenizer.pad_token_id,
-                )
-            # Save file
-            data_tts = pad_array(
-                speech_output.cpu().numpy().squeeze().astype(np.float32),
-                sampling_rate,
-            )
-            sf.write(
-                file=filename,
-                samplerate=sampling_rate,
-                data=data_tts,
-                format="ogg",
-                subtype="vorbis",
-            )
-            verify_saved_file_and_size(filename)
-        except Exception as error:
-            error_handling_in_tts(error, segment, TRANSLATE_AUDIO_TO, filename)
-        gc.collect()
-        torch.cuda.empty_cache()
-    try:
-        del processor
-        del model
-        gc.collect()
-        torch.cuda.empty_cache()
-    except Exception as error:
-        logger.error(str(error))
-        gc.collect()
-        torch.cuda.empty_cache()
 
 
 # =====================================
@@ -637,7 +463,7 @@ def segments_coqui_tts(
     )
 
     # Init TTS
-    device = os.environ.get("SONITR_DEVICE")
+    device = os.environ.get("VD_DEVICE")
     model = TTS(model_id_coqui).to(device)
     sampling_rate = 24000
 
@@ -741,7 +567,7 @@ def load_piper_model(
     try:
         import onnxruntime as rt
 
-        if rt.get_device() == "GPU" and os.environ.get("SONITR_DEVICE") == "cuda":
+        if rt.get_device() == "GPU" and os.environ.get("VD_DEVICE") == "cuda":
             logger.debug("onnxruntime device > GPU")
             cuda = True
         else:
@@ -1044,14 +870,14 @@ def audio_segmentation_to_voice(
     filtered_openai_tts = filter_by_speaker(speakers_openai_tts, all_segments)
 
     # Infer
-    if filtered_edge["segments"]:
-        logger.info(f"EDGE TTS: {speakers_edge}")
-        segments_egde_tts(filtered_edge, TRANSLATE_AUDIO_TO, is_gui)  # mp3
-    if filtered_bark["segments"]:
-        logger.info(f"BARK TTS: {speakers_bark}")
-        segments_bark_tts(
-            filtered_bark, TRANSLATE_AUDIO_TO, model_id_bark
-        )  # wav
+    #if filtered_edge["segments"]:
+    #    logger.info(f"EDGE TTS: {speakers_edge}")
+    #    segments_egde_tts(filtered_edge, TRANSLATE_AUDIO_TO, is_gui)  # mp3
+    #if filtered_bark["segments"]:
+    #    logger.info(f"BARK TTS: {speakers_bark}")
+    #    segments_bark_tts(
+    #        filtered_bark, TRANSLATE_AUDIO_TO, model_id_bark
+    #    )  # wav
     if filtered_vits["segments"]:
         logger.info(f"VITS TTS: {speakers_vits}")
         segments_vits_tts(filtered_vits, TRANSLATE_AUDIO_TO)  # wav
@@ -1385,7 +1211,7 @@ def toneconverter_openvoice(
         url=checkpoint_url, path=model_path
     )
 
-    device = os.environ.get("SONITR_DEVICE")
+    device = os.environ.get("VD_DEVICE")
     tone_color_converter = ToneColorConverter(config_path, device=device)
     tone_color_converter.load_ckpt(checkpoint_path)
 
@@ -1467,7 +1293,7 @@ def toneconverter_freevc(
     )
 
     logger.info("FreeVC loading model...")
-    device_id = os.environ.get("SONITR_DEVICE")
+    device_id = os.environ.get("VD_DEVICE")
     device = None if device_id == "cpu" else device_id
     try:
         from TTS.api import TTS
@@ -1500,8 +1326,8 @@ def toneconverter_freevc(
         for seg in filtered_speaker:
 
             src_path = (
-                  save_path
-              ) = f"audio2/audio/{str(seg['start'])}.ogg"  # overwrite
+                save_path
+            ) = f"audio2/audio/{str(seg['start'])}.ogg"  # overwrite
             logger.debug(f"{src_path} - {original_wav_audio_segment}")
 
             wav = tts.voice_conversion(

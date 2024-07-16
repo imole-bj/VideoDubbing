@@ -5,7 +5,7 @@ import scipy.signal as signal
 import pyworld, os, traceback, faiss, librosa, torchcrepe
 from scipy import signal
 from functools import lru_cache
-from soni_translate.logging_setup import logger
+from video_dubbing.logging_setup import logger
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)

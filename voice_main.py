@@ -1,4 +1,4 @@
-from soni_translate.logging_setup import logger
+from video_dubbing.logging_setup import logger
 import torch
 import gc
 import numpy as np
@@ -17,7 +17,7 @@ from lib.audio import load_audio
 import soundfile as sf
 import edge_tts
 import asyncio
-from soni_translate.utils import remove_directory_contents, create_directories
+from video_dubbing.utils import remove_directory_contents, create_directories
 from scipy import signal
 from time import time as ttime
 import faiss
@@ -114,7 +114,7 @@ BASE_DIR = "."
 
 def load_hu_bert(config):
     from fairseq import checkpoint_utils
-    from soni_translate.utils import download_manager
+    from video_dubbing.utils import download_manager
 
     for id_model in BASE_MODELS:
         download_manager(

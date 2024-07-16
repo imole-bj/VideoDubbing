@@ -1,5 +1,5 @@
 import gradio as gr
-from soni_translate.logging_setup import (
+from video_dubbing.logging_setup import (
     logger,
     set_logging_level,
     configure_logging_libs,
@@ -7,25 +7,24 @@ from soni_translate.logging_setup import (
 import whisperx
 import torch
 import os
-from soni_translate.audio_segments import create_translated_audio
-from soni_translate.text_to_speech import (
+from video_dubbing.audio_segments import create_translated_audio
+from video_dubbing.text_to_speech import (
     audio_segmentation_to_voice,
-    edge_tts_voices_list,
     coqui_xtts_voices_list,
     piper_tts_voices_list,
     create_wav_file_vc,
     accelerate_segments,
 )
-from soni_translate.translate_segments import (
+from video_dubbing.translate_segments import (
     translate_text,
     TRANSLATION_PROCESS_OPTIONS,
     DOCS_TRANSLATION_PROCESS_OPTIONS
 )
-from soni_translate.preprocessor import (
+from video_dubbing.preprocessor import (
     audio_video_preprocessor,
     audio_preprocessor,
 )
-from soni_translate.postprocessor import (
+from video_dubbing.postprocessor import (
     OUTPUT_TYPE_OPTIONS,
     DOCS_OUTPUT_TYPE_OPTIONS,
     sound_separate,
@@ -33,15 +32,12 @@ from soni_translate.postprocessor import (
     media_out,
     get_subtitle_speaker,
 )
-from soni_translate.language_configuration import (
+from video_dubbing.language_configuration import (
     LANGUAGES,
-    UNIDIRECTIONAL_L_LIST,
     LANGUAGES_LIST,
-    BARK_VOICES_LIST,
     VITS_VOICES_LIST,
-    OPENAI_TTS_MODELS,
 )
-from soni_translate.utils import (
+from video_dubbing.utils import (
     remove_files,
     download_list,
     upload_model_list,
@@ -54,12 +50,12 @@ from soni_translate.utils import (
     get_link_list,
     remove_directory_contents,
 )
-from soni_translate.mdx_net import (
+from video_dubbing.mdx_net import (
     UVR_MODELS,
     MDX_DOWNLOAD_LINK,
     mdxnet_models_dir,
 )
-from soni_translate.speech_segmentation import (
+from video_dubbing.speech_segmentation import (
     ASR_MODEL_OPTIONS,
     COMPUTE_TYPE_GPU,
     COMPUTE_TYPE_CPU,
@@ -69,7 +65,7 @@ from soni_translate.speech_segmentation import (
     diarize_speech,
     diarization_models,
 )
-from soni_translate.text_multiformat_processor import (
+from video_dubbing.text_multiformat_processor import (
     BORDER_COLORS,
     srt_file_to_segments,
     document_preprocessor,
@@ -86,7 +82,9 @@ from soni_translate.text_multiformat_processor import (
     create_video_from_images,
     merge_video_and_audio,
 )
-from soni_translate.languages_gui import language_data, news
+
+from video_dubbing.languages_gui import language_data
+
 import copy
 import logging
 import json
@@ -116,10 +114,8 @@ directories = [
 
 class TTS_Info:
     def __init__(self, piper_enabled, xtts_enabled):
-        self.list_edge = edge_tts_voices_list()
-        self.list_bark = list(BARK_VOICES_LIST.keys())
+        # self.list_edge = edge_tts_voices_list()
         self.list_vits = list(VITS_VOICES_LIST.keys())
-        self.list_openai_tts = OPENAI_TTS_MODELS
         self.piper_enabled = piper_enabled
         self.list_vits_onnx = (
             piper_tts_voices_list() if self.piper_enabled else []
@@ -131,10 +127,8 @@ class TTS_Info:
             coqui_xtts_voices_list() if self.xtts_enabled else []
         )
         list_tts = self.list_coqui_xtts + sorted(
-            self.list_edge
-            + self.list_bark
-            + self.list_vits
-            + self.list_openai_tts
+            #self.list_edge
+            self.list_vits
             + self.list_vits_onnx
         )
         return list_tts
@@ -152,7 +146,7 @@ def warn_disp(wrn_lang, is_gui):
         gr.Warning(wrn_lang)
 
 
-class SoniTrCache:
+class VDCache:
     def __init__(self):
         self.cache = {
             'media': [[]],
@@ -258,29 +252,19 @@ def get_hash(filepath):
     return file_hash.hexdigest()[:18]
 
 
-def check_openai_api_key():
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise ValueError(
-            "To use GPT for translation, please set up your OpenAI API key "
-            "as an environment variable in Linux as follows: "
-            "export OPENAI_API_KEY='your-api-key-here'. Or change the "
-            "translation process in Advanced settings."
-        )
-
-
-class SoniTranslate(SoniTrCache):
+class VideoDubbing(VDCache):
     def __init__(self, cpu_mode=False):
         super().__init__()
         if cpu_mode:
-            os.environ["SONITR_DEVICE"] = "cpu"
+            os.environ["VD_DEVICE"] = "cpu"
         else:
-            os.environ["SONITR_DEVICE"] = (
+            os.environ["VD_DEVICE"] = (
                 "cuda" if torch.cuda.is_available() else "cpu"
             )
 
-        self.device = os.environ.get("SONITR_DEVICE")
+        self.device = os.environ.get("VD_DEVICE")
         self.result_diarize = None
-        self.align_language = None
+        self.align_language = True
         self.result_source_lang = None
         self.edit_subs_complete = False
         self.voiceless_id = None
@@ -386,21 +370,11 @@ class SoniTranslate(SoniTrCache):
         batch_size=4,
         compute_type="auto",
         origin_language="Automatic detection",
-        target_language="English (en)",
+        target_language="Fongbe (fon)",
         min_speakers=1,
         max_speakers=1,
-        tts_voice00="en-US-EmmaMultilingualNeural-Female",
-        tts_voice01="en-US-AndrewMultilingualNeural-Male",
-        tts_voice02="en-US-AvaMultilingualNeural-Female",
-        tts_voice03="en-US-BrianMultilingualNeural-Male",
-        tts_voice04="de-DE-SeraphinaMultilingualNeural-Female",
-        tts_voice05="de-DE-FlorianMultilingualNeural-Male",
-        tts_voice06="fr-FR-VivienneMultilingualNeural-Female",
-        tts_voice07="fr-FR-RemyMultilingualNeural-Male",
-        tts_voice08="en-US-EmmaMultilingualNeural-Female",
-        tts_voice09="en-US-AndrewMultilingualNeural-Male",
-        tts_voice10="en-US-EmmaMultilingualNeural-Female",
-        tts_voice11="en-US-AndrewMultilingualNeural-Male",
+        tts_voice00="fon-facebook-mms VITS",
+        tts_voice01="fon-facebook-mms VITS",
         video_output_name="",
         mix_method_audio="Adjusting volumes and mixing audio",
         max_accelerate_audio=2.1,
@@ -446,13 +420,6 @@ class SoniTranslate(SoniTrCache):
             else:
                 os.environ["YOUR_HF_TOKEN"] = YOUR_HF_TOKEN
 
-        if (
-            "gpt" in translate_process
-            or transcriber_model == "OpenAI_API_Whisper"
-            or "OpenAI-TTS" in tts_voice00
-        ):
-            check_openai_api_key()
-
         if media_file is None:
             media_file = (
                 directory_input
@@ -473,12 +440,6 @@ class SoniTranslate(SoniTrCache):
         if not origin_language:
             origin_language = "Automatic detection"
 
-        if origin_language in UNIDIRECTIONAL_L_LIST and not subtitle_file:
-            raise ValueError(
-                f"The language '{origin_language}' "
-                "is not supported for transcription (ASR)."
-            )
-
         if get_translated_text:
             self.edit_subs_complete = False
         if get_video_from_text_json:
@@ -496,15 +457,6 @@ class SoniTranslate(SoniTrCache):
 
         TRANSLATE_AUDIO_TO = LANGUAGES[target_language]
         SOURCE_LANGUAGE = LANGUAGES[origin_language]
-
-        if (
-            transcriber_model == "OpenAI_API_Whisper"
-            and SOURCE_LANGUAGE == "zh-TW"
-        ):
-            logger.warning(
-                "OpenAI API Whisper only supports Chinese (Simplified)."
-            )
-            SOURCE_LANGUAGE = "zh"
 
         if (
             text_segmentation_scale in ["word", "character"]
@@ -659,7 +611,7 @@ class SoniTranslate(SoniTrCache):
                 self.vocals = None
                 if vocal_refinement:
                     try:
-                        from soni_translate.mdx_net import process_uvr_task
+                        from video_dubbing.mdx_net import process_uvr_task
                         _, _, _, _, file_vocals = process_uvr_task(
                             orig_song_path=base_audio_wav,
                             main_vocals=False,
@@ -937,16 +889,6 @@ class SoniTranslate(SoniTrCache):
             TRANSLATE_AUDIO_TO,
             tts_voice00,
             tts_voice01,
-            tts_voice02,
-            tts_voice03,
-            tts_voice04,
-            tts_voice05,
-            tts_voice06,
-            tts_voice07,
-            tts_voice08,
-            tts_voice09,
-            tts_voice10,
-            tts_voice11,
             dereverb_automatic_xtts
         ], {
             "sub_file": self.sub_file
@@ -958,16 +900,6 @@ class SoniTranslate(SoniTrCache):
                 is_gui,
                 tts_voice00,
                 tts_voice01,
-                tts_voice02,
-                tts_voice03,
-                tts_voice04,
-                tts_voice05,
-                tts_voice06,
-                tts_voice07,
-                tts_voice08,
-                tts_voice09,
-                tts_voice10,
-                tts_voice11,
                 dereverb_automatic_xtts,
             )
 
@@ -998,7 +930,7 @@ class SoniTranslate(SoniTrCache):
                 prog_disp(
                     "Voice Imitation...", 0.85, is_gui, progress=progress
                 )
-                from soni_translate.text_to_speech import toneconverter
+                from video_dubbing.text_to_speech import toneconverter
 
                 try:
                     toneconverter(
@@ -1050,7 +982,7 @@ class SoniTranslate(SoniTrCache):
         hash_base_audio_wav = get_hash(base_audio_wav)
         if voiceless_track:
             if self.voiceless_id != hash_base_audio_wav:
-                from soni_translate.mdx_net import process_uvr_task
+                from video_dubbing.mdx_net import process_uvr_task
 
                 try:
                     # voiceless_audio_file_dir = "clean_song_output/voiceless"
@@ -1434,7 +1366,7 @@ class SoniTranslate(SoniTrCache):
         return output
 
 
-title = "<center><strong><font size='7'>📽️ SoniTranslate 🈷️</font></strong></center>"
+title = "<center><strong><font size='7'>📽️ Video Dubbing 🈷️</font></strong></center>"
 
 
 def create_gui(theme, logs_in_gui=False):
@@ -1538,87 +1470,17 @@ def create_gui(theme, logs_in_gui=False):
                         return [value for value in visibility_dict.values()]
 
                     tts_voice00 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
+                        VD.tts_info.tts_list(),
                         value="en-US-EmmaMultilingualNeural-Female",
                         label=lg_conf["sk1"],
                         visible=True,
                         interactive=True,
                     )
                     tts_voice01 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
+                        VD.tts_info.tts_list(),
                         value="en-US-AndrewMultilingualNeural-Male",
                         label=lg_conf["sk2"],
                         visible=True,
-                        interactive=True,
-                    )
-                    tts_voice02 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-AvaMultilingualNeural-Female",
-                        label=lg_conf["sk3"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice03 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-BrianMultilingualNeural-Male",
-                        label=lg_conf["sk4"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice04 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="de-DE-SeraphinaMultilingualNeural-Female",
-                        label=lg_conf["sk4"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice05 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="de-DE-FlorianMultilingualNeural-Male",
-                        label=lg_conf["sk6"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice06 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="fr-FR-VivienneMultilingualNeural-Female",
-                        label=lg_conf["sk7"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice07 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="fr-FR-RemyMultilingualNeural-Male",
-                        label=lg_conf["sk8"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice08 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-EmmaMultilingualNeural-Female",
-                        label=lg_conf["sk9"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice09 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-AndrewMultilingualNeural-Male",
-                        label=lg_conf["sk10"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice10 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-EmmaMultilingualNeural-Female",
-                        label=lg_conf["sk11"],
-                        visible=False,
-                        interactive=True,
-                    )
-                    tts_voice11 = gr.Dropdown(
-                        SoniTr.tts_info.tts_list(),
-                        value="en-US-AndrewMultilingualNeural-Male",
-                        label=lg_conf["sk12"],
-                        visible=False,
                         interactive=True,
                     )
                     max_speakers.change(
@@ -1627,16 +1489,6 @@ def create_gui(theme, logs_in_gui=False):
                         [
                             tts_voice00,
                             tts_voice01,
-                            tts_voice02,
-                            tts_voice03,
-                            tts_voice04,
-                            tts_voice05,
-                            tts_voice06,
-                            tts_voice07,
-                            tts_voice08,
-                            tts_voice09,
-                            tts_voice10,
-                            tts_voice11,
                         ],
                     )
 
@@ -1654,7 +1506,7 @@ def create_gui(theme, logs_in_gui=False):
                             openvoice_models = ["openvoice", "openvoice_v2"]
                             voice_imitation_method_options = (
                                 ["freevc"] + openvoice_models
-                                if SoniTr.tts_info.xtts_enabled
+                                if VD.tts_info.xtts_enabled
                                 else openvoice_models
                             )
                             voice_imitation_method_gui = gr.Dropdown(
@@ -1684,7 +1536,7 @@ def create_gui(theme, logs_in_gui=False):
                                 info=lg_conf["vc_remove_info"],
                             )
 
-                    if SoniTr.tts_info.xtts_enabled:
+                    if VD.tts_info.xtts_enabled:
                         with gr.Column():
                             with gr.Accordion(
                                 lg_conf["xtts_title"],
@@ -1844,7 +1696,7 @@ def create_gui(theme, logs_in_gui=False):
                             )
                             whisper_model_default = (
                                 "large-v3"
-                                if SoniTr.device == "cuda"
+                                if VD.device == "cuda"
                                 else "medium"
                             )
 
@@ -1857,7 +1709,7 @@ def create_gui(theme, logs_in_gui=False):
                             )
                             com_t_opt, com_t_default = (
                                 [COMPUTE_TYPE_GPU, "float16"]
-                                if SoniTr.device == "cuda"
+                                if VD.device == "cuda"
                                 else [COMPUTE_TYPE_CPU, "float32"]
                             )
                             compute_type = gr.Dropdown(
@@ -2012,46 +1864,6 @@ def create_gui(theme, logs_in_gui=False):
                             placeholder=lg_conf["ht_token_ph"],
                         )
 
-                    gr.Examples(
-                        examples=[
-                            [
-                                ["./assets/Video_main.mp4"],
-                                "",
-                                "",
-                                "",
-                                False,
-                                whisper_model_default,
-                                4,
-                                com_t_default,
-                                "Spanish (es)",
-                                "English (en)",
-                                1,
-                                2,
-                                "en-CA-ClaraNeural-Female",
-                                "en-AU-WilliamNeural-Male",
-                            ],
-                        ],  # no update
-                        fn=SoniTr.batch_multilingual_media_conversion,
-                        inputs=[
-                            video_input,
-                            blink_input,
-                            directory_input,
-                            HFKEY,
-                            PREVIEW,
-                            WHISPER_MODEL_SIZE,
-                            batch_size,
-                            compute_type,
-                            SOURCE_LANGUAGE,
-                            TRANSLATE_AUDIO_TO,
-                            min_speakers,
-                            max_speakers,
-                            tts_voice00,
-                            tts_voice01,
-                        ],
-                        outputs=[video_output],
-                        cache_examples=False,
-                    )
-
         with gr.Tab(lg_conf["tab_docs"]):
             with gr.Column():
                 with gr.Accordion("Docs", open=True):
@@ -2121,7 +1933,7 @@ def create_gui(theme, logs_in_gui=False):
                                 list(
                                     filter(
                                         lambda x: x != "_XTTS_/AUTOMATIC.wav",
-                                        SoniTr.tts_info.tts_list(),
+                                        VD.tts_info.tts_list(),
                                     )
                                 ),
                                 value="en-US-EmmaMultilingualNeural-Female",
@@ -2413,7 +2225,7 @@ def create_gui(theme, logs_in_gui=False):
                                             confirm_conf = gr.HTML()
 
                                         button_config.click(
-                                            SoniTr.vci.apply_conf,
+                                            VD.vci.apply_conf,
                                             inputs=[
                                                 tag_gui,
                                                 model_gui,
@@ -2434,67 +2246,9 @@ def create_gui(theme, logs_in_gui=False):
                                             "index": index_gui,
                                         })
 
-                with gr.Column():
-                    with gr.Accordion("Test R.V.C.", open=False):
-                        with gr.Row(variant="compact"):
-                            text_test = gr.Textbox(
-                                label="Text",
-                                value="This is an example",
-                                info="write a text",
-                                placeholder="...",
-                                lines=5,
-                            )
-                            with gr.Column():
-                                tts_test = gr.Dropdown(
-                                    sorted(SoniTr.tts_info.list_edge),
-                                    value="en-GB-ThomasNeural-Male",
-                                    label="TTS",
-                                    visible=True,
-                                    interactive=True,
-                                )
-                                model_test = model_conf()
-                                index_test = index_conf()
-                                pitch_test = pitch_lvl_conf()
-                                pitch_alg_test = pitch_algo_conf()
-                        with gr.Row(variant="compact"):
-                            button_test = gr.Button("Test audio")
-
-                        with gr.Column():
-                            with gr.Row():
-                                original_ttsvoice = gr.Audio()
-                                ttsvoice = gr.Audio()
-
-                            button_test.click(
-                                SoniTr.vci.make_test,
-                                inputs=[
-                                    text_test,
-                                    tts_test,
-                                    model_test,
-                                    index_test,
-                                    pitch_test,
-                                    pitch_alg_test,
-                                ],
-                                outputs=[ttsvoice, original_ttsvoice],
-                            )
-
-                    download_button.click(
-                        download_list,
-                        [url_links],
-                        [download_finish],
-                        queue=False
-                    ).then(
-                        update_models,
-                        [],
-                        [
-                            elem["model"] for elem in configs_storage
-                        ] + [model_test] + [
-                            elem["index"] for elem in configs_storage
-                        ] + [index_test],
-                    )
-
         with gr.Tab(lg_conf["tab_help"]):
             gr.Markdown(lg_conf["tutorial"])
-            gr.Markdown(news)
+            # gr.Markdown(news)
 
             def play_sound_alert(play_sound):
 
@@ -2549,18 +2303,18 @@ def create_gui(theme, logs_in_gui=False):
                 logs = gr.Textbox(label=">>>")
                 app.load(read_logs, None, logs, every=1)
 
-        if SoniTr.tts_info.xtts_enabled:
+        if VD.tts_info.xtts_enabled:
             # Update tts list
             def update_tts_list():
                 update_dict = {
-                    f"tts_voice{i:02d}": gr.update(choices=SoniTr.tts_info.tts_list())
+                    f"tts_voice{i:02d}": gr.update(choices=VD.tts_info.tts_list())
                     for i in range(MAX_TTS)
                 }
                 update_dict["tts_documents"] = gr.update(
                     choices=list(
                         filter(
                             lambda x: x != "_XTTS_/AUTOMATIC.wav",
-                            SoniTr.tts_info.tts_list(),
+                            VD.tts_info.tts_list(),
                         )
                     )
                 )
@@ -2583,23 +2337,13 @@ def create_gui(theme, logs_in_gui=False):
                 [
                     tts_voice00,
                     tts_voice01,
-                    tts_voice02,
-                    tts_voice03,
-                    tts_voice04,
-                    tts_voice05,
-                    tts_voice06,
-                    tts_voice07,
-                    tts_voice08,
-                    tts_voice09,
-                    tts_voice10,
-                    tts_voice11,
                     tts_documents,
                 ],
             )
 
         # Run translate text
         subs_button.click(
-            SoniTr.batch_multilingual_media_conversion,
+            VD.batch_multilingual_media_conversion,
             inputs=[
                 video_input,
                 blink_input,
@@ -2615,16 +2359,6 @@ def create_gui(theme, logs_in_gui=False):
                 max_speakers,
                 tts_voice00,
                 tts_voice01,
-                tts_voice02,
-                tts_voice03,
-                tts_voice04,
-                tts_voice05,
-                tts_voice06,
-                tts_voice07,
-                tts_voice08,
-                tts_voice09,
-                tts_voice10,
-                tts_voice11,
                 VIDEO_OUTPUT_NAME,
                 AUDIO_MIX,
                 audio_accelerate,
@@ -2666,7 +2400,7 @@ def create_gui(theme, logs_in_gui=False):
 
         # Run translate tts and complete
         video_button.click(
-            SoniTr.batch_multilingual_media_conversion,
+            VD.batch_multilingual_media_conversion,
             inputs=[
                 video_input,
                 blink_input,
@@ -2682,16 +2416,6 @@ def create_gui(theme, logs_in_gui=False):
                 max_speakers,
                 tts_voice00,
                 tts_voice01,
-                tts_voice02,
-                tts_voice03,
-                tts_voice04,
-                tts_voice05,
-                tts_voice06,
-                tts_voice07,
-                tts_voice08,
-                tts_voice09,
-                tts_voice10,
-                tts_voice11,
                 VIDEO_OUTPUT_NAME,
                 AUDIO_MIX,
                 audio_accelerate,
@@ -2734,7 +2458,7 @@ def create_gui(theme, logs_in_gui=False):
 
         # Run docs process
         docs_button.click(
-            SoniTr.multilingual_docs_conversion,
+            VD.multilingual_docs_conversion,
             inputs=[
                 text_docs,
                 input_docs,
@@ -2847,8 +2571,8 @@ if __name__ == "__main__":
 
     models_path, index_path = upload_model_list()
 
-    SoniTr = SoniTranslate(cpu_mode=args.cpu_mode)
-
+    VD = VideoDubbing(cpu_mode=args.cpu_mode)
+    
     lg_conf = get_language_config(language_data, language=args.language)
 
     app = create_gui(args.theme, logs_in_gui=args.logs_in_gui)

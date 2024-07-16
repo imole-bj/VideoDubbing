@@ -52,7 +52,7 @@ def setup_logger(name_log):
     return logger
 
 
-logger = setup_logger("sonitranslate")
+logger = setup_logger("videodubbing")
 logger.setLevel(logging.INFO)
 
 
